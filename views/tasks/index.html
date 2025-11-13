@@ -247,9 +247,140 @@
       return new Date().toISOString();
     }
 
+    var STORAGE_KEY = 'sv:tasks:state:v1';
+    var CURRENT_VERSION = '0.1.1';
+
+    function canUseLocalStorage() {
+      try {
+        return typeof window !== 'undefined' && 'localStorage' in window && window.localStorage != null;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    function createDefaultState() {
+      const now = nowISO();
+      return {
+        meta: {
+          createdAt: now,
+          updatedAt: now,
+          version: CURRENT_VERSION,
+        },
+        data: {
+          lists: {
+            1: {
+              id: 1,
+              name: 'Inbox',
+              slug: 'inbox',
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+          tasks: {},
+          taskIdsByListId: {
+            1: [],
+          },
+          listOrder: [1],
+        },
+        ui: {
+          taskFilter: 'all',
+        },
+      };
+    }
+
+    function migrateState(state) {
+      if (!state || typeof state !== 'object') {
+        return createDefaultState();
+      }
+
+      var now = nowISO();
+
+      // Ensure meta
+      if (!state.meta || typeof state.meta !== 'object') {
+        state.meta = {
+          createdAt: now,
+          updatedAt: now,
+          version: CURRENT_VERSION,
+        };
+      } else {
+        if (!state.meta.createdAt) state.meta.createdAt = now;
+        if (!state.meta.updatedAt) state.meta.updatedAt = now;
+      }
+
+      // Ensure data
+      if (!state.data || typeof state.data !== 'object') {
+        return createDefaultState();
+      }
+
+      var data = state.data;
+
+      // Ensure lists
+      if (!data.lists || Object.keys(data.lists).length === 0) {
+        var fresh = createDefaultState();
+        return fresh;
+      }
+
+      // Ensure taskIdsByListId exists and has entries for every list
+      if (!data.taskIdsByListId || typeof data.taskIdsByListId !== 'object') {
+        data.taskIdsByListId = {};
+      }
+      Object.keys(data.lists).forEach(function (id) {
+        var numericId = Number(id);
+        if (!data.taskIdsByListId[numericId]) {
+          data.taskIdsByListId[numericId] = [];
+        }
+      });
+
+      // Ensure listOrder
+      if (!Array.isArray(data.listOrder) || data.listOrder.length === 0) {
+        data.listOrder = Object.keys(data.lists)
+          .map(function (id) { return Number(id); })
+          .filter(function (n) { return !Number.isNaN(n); });
+      }
+
+      // Ensure ui
+      if (!state.ui || typeof state.ui !== 'object') {
+        state.ui = { taskFilter: 'all' };
+      } else {
+        if (!state.ui.taskFilter) {
+          state.ui.taskFilter = 'all';
+        }
+      }
+
+      // Bump version
+      state.meta.version = CURRENT_VERSION;
+      // Do not overwrite createdAt; updatedAt will be refreshed on next mutation
+      return state;
+    }
+
+    function saveState() {
+      if (!canUseLocalStorage()) return;
+      try {
+        var raw = JSON.stringify(window.$state || {});
+        window.localStorage.setItem(STORAGE_KEY, raw);
+      } catch (e) {
+        // ignore storage errors in Phase-1
+      }
+    }
+
+    function loadState() {
+      if (!canUseLocalStorage()) return null;
+      try {
+        var raw = window.localStorage.getItem(STORAGE_KEY);
+        if (!raw) return null;
+        var parsed = JSON.parse(raw);
+        // minimal shape check
+        if (!parsed || !parsed.data || !parsed.data.lists) return null;
+        return migrateState(parsed);
+      } catch (e) {
+        return null;
+      }
+    }
+
     function touchUpdatedAt() {
       if (!window.$state || !window.$state.meta) return;
       window.$state.meta.updatedAt = nowISO();
+      saveState();
     }
 
     function focusAddTaskInput(listId) {
@@ -275,38 +406,25 @@
     }
 
     function initState() {
+      // If state already exists in memory, keep it
       if (window.$state && window.$state.data && window.$state.data.lists) {
         return;
       }
 
-      const now = nowISO();
+      // Try to load from localStorage (and migrate if needed)
+      var loaded = loadState();
+      if (loaded && loaded.data && loaded.data.lists) {
+        window.$state = loaded;
+        // Ensure we persist any migration changes
+        saveState();
+        return;
+      }
 
-      window.$state = {
-        meta: {
-          createdAt: now,
-          updatedAt: now,
-          version: '0.1.0',
-        },
-        data: {
-          lists: {
-            1: {
-              id: 1,
-              name: 'Inbox',
-              slug: 'inbox',
-              createdAt: now,
-              updatedAt: now,
-            },
-          },
-          tasks: {},
-          taskIdsByListId: {
-            1: [],
-          },
-          listOrder: [1],
-        },
-        ui: {
-          taskFilter: 'all',
-        },
-      };
+      // Fallback: create a fresh default state
+      window.$state = createDefaultState();
+
+      // Persist the default state immediately
+      saveState();
     }
 
     function renameList(listId, newName) {
@@ -861,6 +979,20 @@
       render();
     }
 
+    function resetState() {
+      if (canUseLocalStorage()) {
+        try {
+          window.localStorage.removeItem(STORAGE_KEY);
+        } catch (e) {
+          // ignore
+        }
+      }
+      window.$state = null;
+      initState();
+      render();
+      applyTaskFilterUI();
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
       initState();
       render();
@@ -888,6 +1020,10 @@
       moveList: moveList,
       setTaskFilter: setTaskFilter,
       deleteList: deleteList,
+      saveState: saveState,
+      loadState: loadState,
+      resetState: resetState,
+      version: CURRENT_VERSION,
     };
   })();
 </script>
