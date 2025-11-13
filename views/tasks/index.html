@@ -104,6 +104,11 @@
     font-size: 0.85rem;
   }
 
+  .sv-tasks__task-delete {
+    margin-left: auto;
+    font-size: 0.8rem;
+  }
+
   .sv-tasks__task-title {
     font-size: 0.875rem;
     color: var(--color-text-primary);
@@ -169,6 +174,100 @@
     display: flex;
     align-items: center;
     justify-content: center;
+  }
+
+  .sv-tasks__modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .sv-tasks__modal {
+    background: var(--color-surface, #ffffff);
+    border-radius: var(--radius-l, 8px);
+    box-shadow: var(--shadow-l);
+    min-width: 320px;
+    max-width: 480px;
+    padding: var(--space-m);
+    box-sizing: border-box;
+  }
+
+  .sv-tasks__modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--space-s);
+  }
+
+  .sv-tasks__modal-title {
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  .sv-tasks__modal-close {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+  }
+
+  .sv-tasks__modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-s);
+    margin-bottom: var(--space-m);
+  }
+
+  .sv-tasks__modal-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+  }
+
+  .sv-tasks__modal-label {
+    font-size: 0.8rem;
+    color: var(--color-text-secondary);
+  }
+
+  .sv-tasks__modal-input,
+  .sv-tasks__modal-textarea {
+    border-radius: var(--radius-s);
+    border: 1px solid var(--color-border-primary);
+    padding: var(--space-2xs) var(--space-xs);
+    font-size: 0.875rem;
+    box-sizing: border-box;
+  }
+
+  .sv-tasks__modal-textarea {
+    min-height: 80px;
+    resize: vertical;
+  }
+
+  .sv-tasks__modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-xs);
+  }
+
+  .sv-tasks__modal-footer button {
+    border-radius: var(--radius-s);
+    border: 1px solid var(--color-border-primary);
+    padding: 0 var(--space-s);
+    font-size: 0.85rem;
+    line-height: 2;
+    cursor: pointer;
+    background: var(--color-bg-secondary);
+  }
+
+  .sv-tasks__modal-footer button[data-role="primary"] {
+    background: var(--color-accent-primary);
+    color: var(--color-text-primary);
+    border-color: var(--color-accent-primary);
   }
 </style>
 <div class="sv-page__wrap--full">
@@ -245,6 +344,59 @@
   (function () {
     function nowISO() {
       return new Date().toISOString();
+    }
+
+    function formatDueDateDisplay(value) {
+      if (!value) return '';
+
+      var date;
+      try {
+        // Try direct parsing first
+        date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          // Fallback for plain YYYY-MM-DD
+          var parts = String(value).split('-');
+          if (parts.length === 3) {
+            var year = Number(parts[0]);
+            var month = Number(parts[1]) - 1;
+            var day = Number(parts[2]);
+            date = new Date(year, month, day);
+          }
+        }
+      } catch (e) {
+        return String(value);
+      }
+
+      if (!date || Number.isNaN(date.getTime())) {
+        return String(value);
+      }
+
+      var today = new Date();
+      var todayMid = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+      var dateMid = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+      var diffDays = Math.round((dateMid - todayMid) / 86400000); // 24 * 60 * 60 * 1000
+
+      if (diffDays === 0) return 'Today';
+      if (diffDays === 1) return 'Tomorrow';
+      if (diffDays === -1) return 'Yesterday';
+
+      // For near future / recent past, show weekday
+      var options;
+      if (Math.abs(diffDays) <= 7) {
+        options = { weekday: 'short', day: 'numeric', month: 'short' };
+      } else {
+        options = { day: 'numeric', month: 'short', year: 'numeric' };
+      }
+
+      try {
+        return date.toLocaleDateString(undefined, options);
+      } catch (e) {
+        // Fallback if locale fails
+        var dd = String(date.getDate()).padStart(2, '0');
+        var mm = String(date.getMonth() + 1).padStart(2, '0');
+        var yyyy = date.getFullYear();
+        return yyyy + '-' + mm + '-' + dd;
+      }
     }
 
     var STORAGE_KEY = 'sv:tasks:state:v1';
@@ -575,6 +727,267 @@
       render();
     }
 
+    // --- Task details modal state and helpers ---
+    var currentTaskModalId = null;
+
+    function openTaskModal(taskId) {
+      var state = window.$state;
+      if (!state || !state.data || !state.data.tasks) return;
+
+      var numericId = Number(taskId);
+      var task = state.data.tasks[numericId];
+      if (!task) return;
+
+      // Prevent multiple modals
+      if (currentTaskModalId !== null) {
+        closeTaskModal();
+      }
+      currentTaskModalId = numericId;
+
+      var root = document.getElementById('sv-tasks-root');
+      if (!root) return;
+
+      var backdrop = document.createElement('div');
+      backdrop.className = 'sv-tasks__modal-backdrop';
+      backdrop.dataset.role = 'task-modal-backdrop';
+
+      var modal = document.createElement('div');
+      modal.className = 'sv-tasks__modal';
+
+      var header = document.createElement('div');
+      header.className = 'sv-tasks__modal-header';
+
+      var title = document.createElement('div');
+      title.className = 'sv-tasks__modal-title';
+      title.textContent = 'Task details';
+
+      var closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'sv-tasks__modal-close';
+      closeBtn.innerHTML = '&times;';
+      closeBtn.addEventListener('click', function () {
+        closeTaskModal();
+      });
+
+      header.appendChild(title);
+      header.appendChild(closeBtn);
+
+      var body = document.createElement('div');
+      body.className = 'sv-tasks__modal-body';
+
+      var form = document.createElement('form');
+
+      // Title field
+      var fieldTitle = document.createElement('div');
+      fieldTitle.className = 'sv-tasks__modal-field';
+      var labelTitle = document.createElement('label');
+      labelTitle.className = 'sv-tasks__modal-label';
+      labelTitle.textContent = 'Title';
+      var inputTitle = document.createElement('input');
+      inputTitle.type = 'text';
+      inputTitle.className = 'sv-tasks__modal-input';
+      inputTitle.value = task.title || '';
+      fieldTitle.appendChild(labelTitle);
+      fieldTitle.appendChild(inputTitle);
+
+      // Description field
+      var fieldDesc = document.createElement('div');
+      fieldDesc.className = 'sv-tasks__modal-field';
+      var labelDesc = document.createElement('label');
+      labelDesc.className = 'sv-tasks__modal-label';
+      labelDesc.textContent = 'Description';
+      var textareaDesc = document.createElement('textarea');
+      textareaDesc.className = 'sv-tasks__modal-textarea';
+      textareaDesc.value = task.description || '';
+      fieldDesc.appendChild(labelDesc);
+      fieldDesc.appendChild(textareaDesc);
+
+      // Due date field
+      var fieldDue = document.createElement('div');
+      fieldDue.className = 'sv-tasks__modal-field';
+      var labelDue = document.createElement('label');
+      labelDue.className = 'sv-tasks__modal-label';
+      labelDue.textContent = 'Due date';
+      var inputDue = document.createElement('input');
+      inputDue.type = 'date';
+      inputDue.className = 'sv-tasks__modal-input';
+      if (task.dueDate) {
+        try {
+          // Accept either full ISO or plain date strings
+          var dateStr = String(task.dueDate);
+          inputDue.value = dateStr.includes('T') ? dateStr.slice(0, 10) : dateStr;
+        } catch (e) {
+          // ignore parse errors
+        }
+      }
+      fieldDue.appendChild(labelDue);
+      fieldDue.appendChild(inputDue);
+
+      // Recurring field
+      var fieldRecurring = document.createElement('div');
+      fieldRecurring.className = 'sv-tasks__modal-field';
+      var labelRecurring = document.createElement('label');
+      labelRecurring.className = 'sv-tasks__modal-label';
+      labelRecurring.textContent = 'Repeat';
+      var selectRecurring = document.createElement('select');
+      selectRecurring.className = 'sv-tasks__modal-input';
+
+      var options = [
+        { value: '', label: 'None' },
+        { value: 'daily', label: 'Daily' },
+        { value: 'weekly', label: 'Weekly' },
+      ];
+
+      options.forEach(function (opt) {
+        var o = document.createElement('option');
+        o.value = opt.value;
+        o.textContent = opt.label;
+        selectRecurring.appendChild(o);
+      });
+
+      if (task.recurring) {
+        selectRecurring.value = String(task.recurring);
+      }
+
+      fieldRecurring.appendChild(labelRecurring);
+      fieldRecurring.appendChild(selectRecurring);
+
+      // Completed / starred checkboxes
+      var fieldFlags = document.createElement('div');
+      fieldFlags.className = 'sv-tasks__modal-field';
+      var labelFlags = document.createElement('div');
+      labelFlags.className = 'sv-tasks__modal-label';
+      labelFlags.textContent = 'Status';
+      var flagsRow = document.createElement('div');
+      flagsRow.className = 'flex row gap-s align-items-center';
+
+      var completedLabel = document.createElement('label');
+      var completedCheckbox = document.createElement('input');
+      completedCheckbox.type = 'checkbox';
+      completedCheckbox.checked = !!task.completed;
+      completedLabel.appendChild(completedCheckbox);
+      completedLabel.appendChild(document.createTextNode(' Completed'));
+
+      var starredLabel = document.createElement('label');
+      var starredCheckbox = document.createElement('input');
+      starredCheckbox.type = 'checkbox';
+      starredCheckbox.checked = !!task.starred;
+      starredLabel.appendChild(starredCheckbox);
+      starredLabel.appendChild(document.createTextNode(' Important'));
+
+      flagsRow.appendChild(completedLabel);
+      flagsRow.appendChild(starredLabel);
+
+      fieldFlags.appendChild(labelFlags);
+      fieldFlags.appendChild(flagsRow);
+
+      form.appendChild(fieldTitle);
+      form.appendChild(fieldDesc);
+      form.appendChild(fieldDue);
+      form.appendChild(fieldRecurring);
+      form.appendChild(fieldFlags);
+
+      body.appendChild(form);
+
+      var footer = document.createElement('div');
+      footer.className = 'sv-tasks__modal-footer';
+
+      var deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.addEventListener('click', function () {
+        var ok = window.confirm ? window.confirm('Delete this task?') : true;
+        if (!ok) return;
+        deleteTask(numericId);
+        closeTaskModal();
+      });
+
+      var cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.addEventListener('click', function () {
+        closeTaskModal();
+      });
+
+      var saveBtn = document.createElement('button');
+      saveBtn.type = 'submit';
+      saveBtn.textContent = 'Save';
+      saveBtn.dataset.role = 'primary';
+
+      footer.appendChild(deleteBtn);
+      footer.appendChild(cancelBtn);
+      footer.appendChild(saveBtn);
+
+      form.appendChild(footer);
+
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        saveTaskFromModal(numericId, {
+          title: inputTitle.value,
+          description: textareaDesc.value,
+          dueDate: inputDue.value,
+          recurring: selectRecurring.value,
+          completed: completedCheckbox.checked,
+          starred: starredCheckbox.checked,
+        });
+      });
+
+      modal.appendChild(header);
+      modal.appendChild(body);
+
+      backdrop.appendChild(modal);
+
+      // Close when clicking on backdrop
+      backdrop.addEventListener('click', function (event) {
+        if (event.target === backdrop) {
+          closeTaskModal();
+        }
+      });
+
+      root.appendChild(backdrop);
+
+      // Focus title input by default
+      inputTitle.focus();
+      inputTitle.select();
+    }
+
+    function closeTaskModal() {
+      var root = document.getElementById('sv-tasks-root');
+      if (!root) return;
+      var backdrop = root.querySelector('[data-role="task-modal-backdrop"]');
+      if (backdrop && backdrop.parentNode) {
+        backdrop.parentNode.removeChild(backdrop);
+      }
+      currentTaskModalId = null;
+    }
+
+    function saveTaskFromModal(taskId, payload) {
+      var state = window.$state;
+      if (!state || !state.data || !state.data.tasks) return;
+
+      var numericId = Number(taskId);
+      var task = state.data.tasks[numericId];
+      if (!task) return;
+
+      var trimmedTitle = (payload.title || '').trim();
+      if (!trimmedTitle) {
+        // Do not allow empty title; keep existing
+        trimmedTitle = task.title || '';
+      }
+
+      task.title = trimmedTitle;
+      task.description = payload.description || null;
+      task.dueDate = payload.dueDate || null;
+      task.recurring = payload.recurring ? payload.recurring : null;
+      task.completed = !!payload.completed;
+      task.starred = !!payload.starred;
+      task.updatedAt = nowISO();
+
+      touchUpdatedAt();
+      render();
+      closeTaskModal();
+    }
+
     var dragState = {
       taskId: null,
       fromListId: null,
@@ -856,8 +1269,23 @@
           if (task.dueDate) {
             var timeEl = document.createElement('time');
             timeEl.dateTime = task.dueDate;
-            timeEl.textContent = task.dueDate; // formatting can be improved later
+            var pretty = formatDueDateDisplay(task.dueDate);
+            timeEl.textContent = pretty;
+            timeEl.title = String(task.dueDate);
             meta.appendChild(timeEl);
+          }
+
+          if (task.recurring) {
+            var recurSpan = document.createElement('span');
+            var label = '';
+            if (task.recurring === 'daily') label = '• Repeats daily';
+            else if (task.recurring === 'weekly') label = '• Repeats weekly';
+            else label = '• Repeats';
+            if (meta.childNodes.length > 0) {
+              recurSpan.style.marginLeft = '0.25rem';
+            }
+            recurSpan.textContent = label;
+            meta.appendChild(recurSpan);
           }
 
           content.appendChild(titleNode);
@@ -865,9 +1293,29 @@
             content.appendChild(meta);
           }
 
+          // Open details modal when clicking on the content area
+          content.addEventListener('click', function () {
+            openTaskModal(taskId);
+          });
+
           taskMain.appendChild(checkbox);
           taskMain.appendChild(starButton);
           taskMain.appendChild(content);
+
+          // Quick delete button on the card
+          var deleteBtn = document.createElement('button');
+          deleteBtn.type = 'button';
+          deleteBtn.className = 'sv-icon-button sv-tasks__task-delete';
+          deleteBtn.setAttribute('aria-label', 'Delete task');
+          deleteBtn.textContent = '🗑';
+          deleteBtn.addEventListener('click', function (event) {
+            event.stopPropagation();
+            var ok = window.confirm ? window.confirm('Delete this task?') : true;
+            if (!ok) return;
+            deleteTask(taskId);
+          });
+
+          taskMain.appendChild(deleteBtn);
 
           taskCard.appendChild(taskMain);
           if (task.completed) {
@@ -937,6 +1385,36 @@
 
       applyTaskFilterUI();
     }
+
+    function deleteTask(taskId) {
+      var state = window.$state;
+      if (!state || !state.data) return;
+
+      var tasks = state.data.tasks || {};
+      var taskIdsByListId = state.data.taskIdsByListId || {};
+
+      var numericTaskId = Number(taskId);
+      var task = tasks[numericTaskId];
+      if (!task) return;
+
+      var listId = Number(task.listId);
+      var listTaskIds = taskIdsByListId[listId] || [];
+
+      // Remove task from list mapping
+      taskIdsByListId[listId] = listTaskIds.filter(function (id) {
+        return Number(id) !== numericTaskId;
+      });
+
+      // Remove task record
+      delete tasks[numericTaskId];
+
+      state.data.tasks = tasks;
+      state.data.taskIdsByListId = taskIdsByListId;
+
+      touchUpdatedAt();
+      render();
+    }
+
     function deleteList(listId) {
       var state = window.$state;
       if (!state || !state.data) return;
@@ -1020,9 +1498,12 @@
       moveList: moveList,
       setTaskFilter: setTaskFilter,
       deleteList: deleteList,
+      deleteTask: deleteTask,
       saveState: saveState,
       loadState: loadState,
       resetState: resetState,
+      openTaskModal: openTaskModal,
+      closeTaskModal: closeTaskModal,
       version: CURRENT_VERSION,
     };
   })();
