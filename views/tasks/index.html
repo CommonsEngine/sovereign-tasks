@@ -2,6 +2,7 @@
   .sv-page__grid {
     padding: 5px 20px;
   }
+
   /* Root container for the plugin */
   .sv-tasks {
     display: flex;
@@ -120,7 +121,8 @@
   }
 
   .sv-tasks__list-body {
-    min-height: 40px; /* small target even when empty */
+    min-height: 40px;
+    /* small target even when empty */
     margin-bottom: var(--space-s);
     flex: 1;
     overflow-y: auto;
@@ -138,7 +140,7 @@
     transition: background-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
   }
 
-  .sv-tasks__task-card + .sv-tasks__task-card {
+  .sv-tasks__task-card+.sv-tasks__task-card {
     margin-top: var(--space-2xs);
   }
 
@@ -185,6 +187,7 @@
     text-decoration: line-through;
     color: var(--color-text-secondary);
   }
+
   .sv-tasks__task-card--completed {
     opacity: 0.6;
   }
@@ -196,6 +199,7 @@
   .sv-tasks__task-card--starred .sv-tasks__task-star {
     color: var(--color-accent-primary);
   }
+
   .sv-tasks__filter-button {
     border-radius: var(--radius-s);
     border: 1px solid transparent;
@@ -335,6 +339,48 @@
     color: var(--color-text-primary);
     border-color: var(--color-accent-primary);
   }
+
+  .sv-tasks__list-shared-pill {
+    display: inline-block;
+    margin-left: var(--space-2xs);
+    padding: 0 var(--space-2xs);
+    border-radius: var(--radius-pill, 999px);
+    font-size: 0.7rem;
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+  }
+
+  .sv-tasks__share-invite-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .sv-tasks__share-invite-item {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    padding-block: 2px;
+  }
+
+  .sv-tasks__share-invite-email {
+    flex: 1;
+    margin-right: var(--space-2xs);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sv-tasks__share-invite-status {
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+  }
+
+  .sv-tasks__share-invite-empty {
+    font-size: 0.8rem;
+    color: var(--color-text-secondary);
+    font-style: italic;
+  }
 </style>
 <div class="sv-page__wrap--full">
   <section class="sv-page__grid">
@@ -395,15 +441,15 @@
                   <div class="sv-tasks__task-meta">
                     <time datetime="2025-11-15">15 Nov</time>
                     <!-- future: recurrence icon, list name, etc. -->
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </article>
       </div>
     </div>
-  </section>
+</div>
+</div>
+</div>
+</article>
+</div>
+</div>
+</section>
 </div>
 
 <script>
@@ -859,6 +905,7 @@
             1: [],
           },
           listOrder: [1],
+          shareInvitesByListId: {},
         },
         ui: {
           taskFilter: 'all',
@@ -994,6 +1041,11 @@
         data.listOrder = Object.keys(data.lists)
           .map(function (id) { return Number(id); })
           .filter(function (n) { return !Number.isNaN(n); });
+      }
+
+      // Ensure shareInvitesByListId
+      if (!data.shareInvitesByListId || typeof data.shareInvitesByListId !== 'object') {
+        data.shareInvitesByListId = {};
       }
 
       // Ensure ui
@@ -1368,6 +1420,284 @@
     // --- Task details modal state and helpers ---
     var currentTaskModalId = null;
 
+    // --- Share list modal state and helpers ---
+    var currentShareModalListId = null;
+
+    function closeShareListModal() {
+      var root = document.getElementById('sv-tasks-root');
+      if (!root) return;
+      var backdrop = root.querySelector('[data-role="share-list-modal-backdrop"]');
+      if (backdrop && backdrop.parentNode) {
+        backdrop.parentNode.removeChild(backdrop);
+      }
+      currentShareModalListId = null;
+    }
+
+    function shareListWithEmail(listId, email) {
+      var trimmed = (email || '').trim();
+      if (!trimmed) {
+        if (window.alert) {
+          window.alert('Please enter an email address.');
+        }
+        return;
+      }
+
+      // very lightweight email validation
+      var simpleEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+      if (!simpleEmail.test(trimmed)) {
+        if (window.alert) {
+          window.alert('Please enter a valid email address.');
+        }
+        return;
+      }
+
+      var state = window.$state;
+      if (!state || !state.data || !state.data.lists) return;
+
+      var numericId = Number(listId);
+      var list = state.data.lists[numericId];
+      if (!list) return;
+
+      var remoteId = list.remoteId;
+      if ((!remoteId || Number.isNaN(Number(remoteId))) && state.sync && state.sync.remoteListIds) {
+        var mapped = state.sync.remoteListIds[list.id];
+        if (mapped) {
+          remoteId = mapped;
+        }
+      }
+
+      if (!remoteId) {
+        if (window.alert) {
+          window.alert('This list has not been synced with the server yet and cannot be shared.');
+        }
+        return;
+      }
+
+      // Best-effort API call; backend implementation will be added later.
+      try {
+        fetch('/api/plugins/tasks/lists/' + remoteId + '/share', {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+          },
+          credentials: 'same-origin',
+          body: JSON.stringify({ email: trimmed }),
+        })
+          .then(function (res) {
+            if (!res) return null;
+            if (!res.ok) {
+              // Try to surface basic error information in dev tools only
+              return res.json().catch(function () { return null; }).then(function (err) {
+                if (window.console && console.warn) {
+                  console.warn('[tasks] Share list failed', err || res.statusText);
+                }
+                return null;
+              });
+            }
+            return res.json().catch(function () { return null; });
+          })
+          .then(function (result) {
+            var stateAfter = window.$state;
+            if (stateAfter && stateAfter.data) {
+              if (!stateAfter.data.shareInvitesByListId || typeof stateAfter.data.shareInvitesByListId !== 'object') {
+                stateAfter.data.shareInvitesByListId = {};
+              }
+              var listInvites = stateAfter.data.shareInvitesByListId[numericId] || [];
+              listInvites = listInvites.slice(); // shallow copy
+              listInvites.push({
+                id: result && typeof result.inviteId !== 'undefined' ? result.inviteId : null,
+                email: trimmed,
+                status: (result && result.status) || 'pending',
+              });
+              stateAfter.data.shareInvitesByListId[numericId] = listInvites;
+              try {
+                saveState();
+              } catch (e) {
+                // ignore storage errors
+              }
+              try {
+                render();
+              } catch (e) {
+                // ignore render errors
+              }
+            }
+
+            if (window.alert) {
+              window.alert('Invitation sent to ' + trimmed + '.');
+            }
+          })
+          .catch(function (err) {
+            if (window.console && console.warn) {
+              console.warn('[tasks] Share list network error', err);
+            }
+          });
+      } catch (e) {
+        // ignore unexpected failures to preserve offline-first behaviour
+      }
+    }
+
+    function openShareListModal(listId) {
+      var state = window.$state;
+      if (!state || !state.data || !state.data.lists) return;
+
+      var numericId = Number(listId);
+      var list = state.data.lists[numericId];
+      if (!list) return;
+
+      // Prevent multiple share modals
+      if (currentShareModalListId !== null) {
+        closeShareListModal();
+      }
+      currentShareModalListId = numericId;
+
+      var root = document.getElementById('sv-tasks-root');
+      if (!root) return;
+
+      var backdrop = document.createElement('div');
+      backdrop.className = 'sv-tasks__modal-backdrop';
+      backdrop.dataset.role = 'share-list-modal-backdrop';
+
+      var modal = document.createElement('div');
+      modal.className = 'sv-tasks__modal';
+
+      var header = document.createElement('div');
+      header.className = 'sv-tasks__modal-header';
+
+      var title = document.createElement('div');
+      title.className = 'sv-tasks__modal-title';
+      title.textContent = 'Share list';
+
+      var closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'sv-tasks__modal-close';
+      closeBtn.innerHTML = '&times;';
+      closeBtn.addEventListener('click', function () {
+        closeShareListModal();
+      });
+
+      header.appendChild(title);
+      header.appendChild(closeBtn);
+
+      var body = document.createElement('div');
+      body.className = 'sv-tasks__modal-body';
+
+      var form = document.createElement('form');
+
+      var infoText = document.createElement('p');
+      infoText.className = 'sv-tasks__modal-label';
+      infoText.textContent = 'Share "' + list.name + '" with another user by email.';
+
+      var fieldEmail = document.createElement('div');
+      fieldEmail.className = 'sv-tasks__modal-field';
+
+      var labelEmail = document.createElement('label');
+      labelEmail.className = 'sv-tasks__modal-label';
+      labelEmail.textContent = 'Email address';
+
+      var inputEmail = document.createElement('input');
+      inputEmail.type = 'email';
+      inputEmail.className = 'sv-tasks__modal-input';
+      inputEmail.placeholder = 'user@example.com';
+
+      fieldEmail.appendChild(labelEmail);
+      fieldEmail.appendChild(inputEmail);
+
+      form.appendChild(infoText);
+      form.appendChild(fieldEmail);
+
+      // Existing invites list
+      var stateForInvites = window.$state;
+      var invitesBlock = document.createElement('div');
+      invitesBlock.className = 'sv-tasks__modal-field';
+
+      var invites = [];
+      if (stateForInvites && stateForInvites.data && stateForInvites.data.shareInvitesByListId) {
+        invites = stateForInvites.data.shareInvitesByListId[numericId] || [];
+      }
+
+      if (invites.length > 0) {
+        var invitesLabel = document.createElement('div');
+        invitesLabel.className = 'sv-tasks__modal-label';
+        invitesLabel.textContent = 'Already shared with';
+
+        var invitesList = document.createElement('ul');
+        invitesList.className = 'sv-tasks__share-invite-list';
+
+        invites.forEach(function (inv) {
+          var li = document.createElement('li');
+          li.className = 'sv-tasks__share-invite-item';
+
+          var emailSpan = document.createElement('span');
+          emailSpan.className = 'sv-tasks__share-invite-email';
+          emailSpan.textContent = inv.email;
+
+          var statusSpan = document.createElement('span');
+          statusSpan.className = 'sv-tasks__share-invite-status';
+          statusSpan.textContent = inv.status || 'pending';
+
+          li.appendChild(emailSpan);
+          li.appendChild(statusSpan);
+          invitesList.appendChild(li);
+        });
+
+        invitesBlock.appendChild(invitesLabel);
+        invitesBlock.appendChild(invitesList);
+      } else {
+        var noInvites = document.createElement('div');
+        noInvites.className = 'sv-tasks__share-invite-empty';
+        noInvites.textContent = 'Not shared with anyone yet.';
+        invitesBlock.appendChild(noInvites);
+      }
+
+      form.appendChild(invitesBlock);
+
+      var footer = document.createElement('div');
+      footer.className = 'sv-tasks__modal-footer';
+
+      var cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.addEventListener('click', function () {
+        closeShareListModal();
+      });
+
+      var shareBtn = document.createElement('button');
+      shareBtn.type = 'submit';
+      shareBtn.textContent = 'Share';
+      shareBtn.dataset.role = 'primary';
+
+      footer.appendChild(cancelBtn);
+      footer.appendChild(shareBtn);
+      form.appendChild(footer);
+
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        shareListWithEmail(numericId, inputEmail.value);
+        closeShareListModal();
+      });
+
+      body.appendChild(form);
+
+      modal.appendChild(header);
+      modal.appendChild(body);
+
+      backdrop.appendChild(modal);
+
+      // Close when clicking on backdrop
+      backdrop.addEventListener('click', function (event) {
+        if (event.target === backdrop) {
+          closeShareListModal();
+        }
+      });
+
+      root.appendChild(backdrop);
+
+      // Focus email input by default
+      inputEmail.focus();
+      inputEmail.select();
+    }
+
     function openTaskModal(taskId) {
       var state = window.$state;
       if (!state || !state.data || !state.data.tasks) return;
@@ -1536,8 +1866,8 @@
       customEndsSelect.style.maxWidth = '160px';
 
       [
-        { value: 'never',      label: 'Does not end' },
-        { value: 'onDate',     label: 'On date' },
+        { value: 'never', label: 'Does not end' },
+        { value: 'onDate', label: 'On date' },
         { value: 'afterCount', label: 'After' },
       ].forEach(function (opt) {
         var o = document.createElement('option');
@@ -2038,6 +2368,16 @@
         titleEl.className = 'sv-h-5 sv-tasks__list-title';
         titleEl.textContent = list.name;
 
+        // Shared status pill: show if this list has share invites
+        var shareMap = (window.$state && window.$state.data && window.$state.data.shareInvitesByListId) || {};
+        var listInvites = shareMap[listId];
+        if (listInvites && listInvites.length > 0) {
+          var pill = document.createElement('span');
+          pill.className = 'sv-tasks__list-shared-pill';
+          pill.textContent = 'Shared';
+          titleEl.appendChild(pill);
+        }
+
         titleEl.addEventListener('click', function () {
           var input = document.createElement('input');
           input.type = 'text';
@@ -2103,6 +2443,10 @@
             });
             menu.appendChild(item);
           }
+
+          addItem('Share list…', function () {
+            openShareListModal(listId);
+          });
 
           addItem('Sort by created time', function () {
             sortTasksInList(listId, 'createdAt');
@@ -2659,6 +3003,21 @@
               taskIdsByListId[listId].push(id);
             });
 
+            var shareInvitesByListId = {};
+            if (Array.isArray(payload.invites)) {
+              payload.invites.forEach(function (invite) {
+                var lid = invite.listId;
+                if (!shareInvitesByListId[lid]) {
+                  shareInvitesByListId[lid] = [];
+                }
+                shareInvitesByListId[lid].push({
+                  id: invite.id,
+                  email: invite.email,
+                  status: invite.status,
+                });
+              });
+            }
+
             var nextState = {
               meta: {
                 createdAt: (window.$state && window.$state.meta && window.$state.meta.createdAt) || now,
@@ -2670,6 +3029,7 @@
                 tasks: tasksMap,
                 taskIdsByListId: taskIdsByListId,
                 listOrder: listOrder,
+                shareInvitesByListId: shareInvitesByListId,
               },
               ui: (window.$state && window.$state.ui) || { taskFilter: 'all' },
               sync: {

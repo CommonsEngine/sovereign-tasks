@@ -30,7 +30,8 @@
     "allowMultipleInstances": false,
     "compat": { "platform": "^0.7.3", "node": ">=20" },
     "platformCapabilities": {
-      "database": true
+      "database": true,
+      "mailer": true
     },
     "userCapabilities": [
       {

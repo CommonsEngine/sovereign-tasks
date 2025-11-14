@@ -17,7 +17,8 @@ model TaskList {
   updatedAt  DateTime @updatedAt @map("updated_at")
 
   // Relations
-  tasks      Task[]
+  tasks        Task[]
+  shareInvites TaskListShareInvite[]
 
   @@index([userId])
   @@index([position])
@@ -85,4 +86,28 @@ model TaskReminder {
   @@index([userId])
   @@index([taskId])
   @@map("task_reminders")
+}
+
+// ============================================================
+// TASK LIST SHARING – INVITES (Phase 2)
+// ============================================================
+
+model TaskListShareInvite {
+  id        Int      @id @default(autoincrement()) @map("id")
+  listId    Int      @map("list_id")
+  inviterId String   @map("inviter_id") // user who initiated the share
+  email     String   @map("email")      // email address of the invitee
+  token     String   @unique @map("token")
+  role      String   @default("editor")  @map("role")    // e.g. "viewer" | "editor"
+  status    String   @default("pending") @map("status")  // "pending" | "accepted" | "revoked"
+  createdAt DateTime @default(now())     @map("created_at")
+  updatedAt DateTime @updatedAt          @map("updated_at")
+
+  // Relations
+  list TaskList @relation(fields: [listId], references: [id], onDelete: Cascade)
+
+  @@index([listId])
+  @@index([email])
+  @@index([inviterId])
+  @@map("task_list_share_invites")
 }
