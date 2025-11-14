@@ -26,7 +26,7 @@ export default (ctx) => {
   }
 
   // API: Bootstrap tasks state
-  router.get("/api/tasks/bootstrap", asyncHandler(async (req, res) => {
+  router.get("/bootstrap", asyncHandler(async (req, res) => {
     const userId = getUserId(req);
     if (!userId) {
       return res.status(401).json({ error: "Unauthorized" });
@@ -56,7 +56,7 @@ export default (ctx) => {
   }));
 
   // API: List all lists
-  router.get("/api/tasks/lists", asyncHandler(async (req, res) => {
+  router.get("/lists", asyncHandler(async (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
@@ -69,7 +69,7 @@ export default (ctx) => {
   }));
 
   // API: Create a new list
-  router.post("/api/tasks/lists", asyncHandler(async (req, res) => {
+  router.post("/lists", asyncHandler(async (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
@@ -93,7 +93,7 @@ export default (ctx) => {
   }));
 
   // API: Update / rename a list
-  router.put("/api/tasks/lists/:id", asyncHandler(async (req, res) => {
+  router.put("/lists/:id", asyncHandler(async (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
@@ -121,7 +121,7 @@ export default (ctx) => {
   }));
 
   // API: Delete a list (and its tasks)
-  router.delete("/api/tasks/lists/:id", asyncHandler(async (req, res) => {
+  router.delete("/lists/:id", asyncHandler(async (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
@@ -142,7 +142,7 @@ export default (ctx) => {
   }));
 
   // API: Reorder lists (full order)
-  router.put("/api/tasks/lists/order", asyncHandler(async (req, res) => {
+  router.put("/lists/order", asyncHandler(async (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
@@ -176,7 +176,7 @@ export default (ctx) => {
   }));
 
   // API: List tasks (optionally by list)
-  router.get("/api/tasks", asyncHandler(async (req, res) => {
+  router.get("/", asyncHandler(async (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
@@ -199,7 +199,7 @@ export default (ctx) => {
   }));
 
   // API: Create a new task
-  router.post("/api/tasks", asyncHandler(async (req, res) => {
+  router.post("/", asyncHandler(async (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
@@ -219,6 +219,8 @@ export default (ctx) => {
     if (!title || typeof title !== "string") {
       return res.status(400).json({ error: "title is required" });
     }
+
+    console.log("!!!!!Creating task in listId:", parsedListId, userId);
 
     const list = await prisma.taskList.findFirst({
       where: { id: parsedListId, userId },
@@ -247,7 +249,7 @@ export default (ctx) => {
   }));
 
   // API: Update a task
-  router.put("/api/tasks/:id", asyncHandler(async (req, res) => {
+  router.put("/:id", asyncHandler(async (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
@@ -309,7 +311,7 @@ export default (ctx) => {
   }));
 
   // API: Delete a task
-  router.delete("/api/tasks/:id", asyncHandler(async (req, res) => {
+  router.delete("/:id", asyncHandler(async (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
@@ -327,7 +329,7 @@ export default (ctx) => {
   }));
 
   // API: Reorder tasks within a list (and optionally move into list)
-  router.put("/api/tasks/order", asyncHandler(async (req, res) => {
+  router.put("/order", asyncHandler(async (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
@@ -366,7 +368,7 @@ export default (ctx) => {
   }));
 
   // API: Delete all completed tasks in a list
-  router.delete("/api/tasks/lists/:id/completed", asyncHandler(async (req, res) => {
+  router.delete("/lists/:id/completed", asyncHandler(async (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
@@ -384,11 +386,6 @@ export default (ctx) => {
 
     res.json({ ok: true, deletedCount: result.count });
   }));
-
-  // Main view
-  router.get(["/", "/index", "/home"], (req, res) => {
-    return res.render("tasks/index");
-  });
 
   return router;
 };

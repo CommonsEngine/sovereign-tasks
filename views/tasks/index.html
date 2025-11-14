@@ -563,6 +563,270 @@
     var STORAGE_KEY = 'sv:tasks:state:v1';
     var CURRENT_VERSION = '0.1.1';
 
+    // --- Sync helpers ---
+    function isOnline() {
+      try {
+        if (typeof navigator === 'undefined' || !navigator) return true;
+        // offline-first: if the browser explicitly says "offline", don't hit the server
+        return navigator.onLine !== false;
+      } catch (e) {
+        return true;
+      }
+    }
+
+    function syncRequest(path, method, body) {
+      if (typeof fetch !== 'function') return;
+      if (!isOnline()) return;
+
+      var opts = {
+        method: method || 'GET',
+        headers: {
+          'Accept': 'application/json',
+        },
+        credentials: 'same-origin',
+      };
+
+      if (typeof body !== 'undefined') {
+        opts.headers['Content-Type'] = 'application/json';
+        opts.body = JSON.stringify(body);
+      }
+
+      try {
+        fetch(path, opts).catch(function () {
+          // swallow errors: offline-first
+        });
+      } catch (e) {
+        // ignore unexpected environments
+      }
+    }
+
+    function syncCreateList(list) {
+      if (!list) return;
+      if (typeof fetch !== 'function') return;
+      if (!isOnline()) return;
+
+      var payload = {
+        name: list.name,
+        slug: list.slug,
+        // Let the server know our local id so we can map later if needed
+        clientId: list.id,
+      };
+
+      try {
+        fetch('/api/plugins/tasks/lists', {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+          },
+          credentials: 'same-origin',
+          body: JSON.stringify(payload),
+        })
+          .then(function (res) {
+            if (!res || !res.ok) return null;
+            return res.json();
+          })
+          .then(function (created) {
+            if (!created || typeof created.id === 'undefined') return;
+
+            var state = window.$state;
+            if (!state || !state.data || !state.data.lists) return;
+
+            var localList = state.data.lists[list.id];
+            if (!localList) return;
+
+            // Store remote id on the list
+            localList.remoteId = created.id;
+
+            // Also track in sync.remoteListIds map
+            if (!state.sync || typeof state.sync !== 'object') {
+              state.sync = { lastServerBootstrapAt: null, remoteListIds: {} };
+            }
+            if (!state.sync.remoteListIds || typeof state.sync.remoteListIds !== 'object') {
+              state.sync.remoteListIds = {};
+            }
+            state.sync.remoteListIds[localList.id] = created.id;
+
+            touchUpdatedAt();
+            saveState();
+          })
+          .catch(function () {
+            // ignore network or parsing issues to preserve offline-first behaviour
+          });
+      } catch (e) {
+        // ignore environments without fetch or unexpected failures
+      }
+    }
+
+    function syncUpdateList(list) {
+      if (!list || typeof list.id === 'undefined') return;
+      var state = window.$state;
+      var remoteId = list.remoteId;
+
+      if ((!remoteId || Number.isNaN(Number(remoteId))) && state && state.sync && state.sync.remoteListIds) {
+        var mapped = state.sync.remoteListIds[list.id];
+        if (mapped) {
+          remoteId = mapped;
+        }
+      }
+
+      if (!remoteId) return;
+
+      syncRequest('/api/plugins/tasks/lists/' + remoteId, 'PUT', {
+        name: list.name,
+        slug: list.slug,
+      });
+    }
+
+    function syncDeleteList(listId) {
+      if (!listId) return;
+      var state = window.$state;
+      var numericId = Number(listId);
+      var lists = state && state.data && state.data.lists ? state.data.lists : null;
+      var list = lists && lists[numericId] ? lists[numericId] : null;
+      var remoteId = list && list.remoteId;
+
+      if ((!remoteId || Number.isNaN(Number(remoteId))) && state && state.sync && state.sync.remoteListIds) {
+        var mapped = state.sync.remoteListIds[numericId];
+        if (mapped) {
+          remoteId = mapped;
+        }
+      }
+
+      if (!remoteId) return;
+
+      syncRequest('/api/plugins/tasks/lists/' + remoteId, 'DELETE');
+    }
+
+    function syncCreateTask(task) {
+      if (!task) return;
+      if (typeof fetch !== 'function') return;
+      if (!isOnline()) return;
+
+      var state = window.$state;
+      if (!state || !state.data || !state.data.lists) return;
+
+      var lists = state.data.lists;
+      var localList = lists[task.listId];
+      if (!localList) return;
+
+      var remoteListId = localList.remoteId;
+      if ((!remoteListId || Number.isNaN(Number(remoteListId))) && state.sync && state.sync.remoteListIds) {
+        var mapped = state.sync.remoteListIds[localList.id];
+        if (mapped) {
+          remoteListId = mapped;
+        }
+      }
+
+      // If we still don't know the remote list id, we can't safely sync this task yet.
+      if (!remoteListId) return;
+
+      var payload = {
+        listId: remoteListId,
+        title: task.title,
+        description: task.description,
+        dueDate: task.dueDate,
+        recurringConfig: task.recurring || null,
+        starred: !!task.starred,
+      };
+
+      try {
+        fetch('/api/plugins/tasks', {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+          },
+          credentials: 'same-origin',
+          body: JSON.stringify(payload),
+        })
+          .then(function (res) {
+            if (!res || !res.ok) return null;
+            return res.json();
+          })
+          .then(function (created) {
+            if (!created || typeof created.id === 'undefined') return;
+
+            var st = window.$state;
+            if (!st || !st.data || !st.data.tasks) return;
+
+            var localTask = st.data.tasks[task.id];
+            if (!localTask) return;
+
+            // Remember remote ids so later updates/deletes use the server's primary keys
+            localTask.remoteId = created.id;
+            localTask.remoteListId = remoteListId;
+
+            touchUpdatedAt();
+            saveState();
+          })
+          .catch(function () {
+            // ignore network or parsing errors; offline-first behaviour
+          });
+      } catch (e) {
+        // ignore unexpected failures
+      }
+    }
+
+    function syncUpdateTask(task) {
+      if (!task || typeof task.id === 'undefined') return;
+
+      var state = window.$state;
+      var remoteTaskId = (typeof task.remoteId !== 'undefined' && task.remoteId !== null)
+        ? task.remoteId
+        : task.id; // for tasks that originated from the server
+
+      if (!remoteTaskId) return;
+
+      var lists = state && state.data && state.data.lists ? state.data.lists : null;
+      var localList = lists && lists[task.listId] ? lists[task.listId] : null;
+
+      var remoteListId = task.remoteListId || (localList && localList.remoteId) || null;
+      if ((!remoteListId || Number.isNaN(Number(remoteListId))) && state && state.sync && state.sync.remoteListIds && localList) {
+        var mapped = state.sync.remoteListIds[localList.id];
+        if (mapped) {
+          remoteListId = mapped;
+        }
+      }
+
+      var body = {
+        title: task.title,
+        description: task.description,
+        dueDate: task.dueDate,
+        recurringConfig: task.recurring || null,
+        completed: !!task.completed,
+        starred: !!task.starred,
+      };
+
+      // Only include listId in the payload if we know the remote list id
+      if (remoteListId) {
+        body.listId = remoteListId;
+      }
+
+      syncRequest('/api/plugins/tasks/' + remoteTaskId, 'PUT', body);
+    }
+
+    function syncDeleteTask(taskId) {
+      if (!taskId) return;
+      var state = window.$state;
+      var numericId = Number(taskId);
+      var tasks = state && state.data && state.data.tasks ? state.data.tasks : null;
+      var task = tasks && tasks[numericId] ? tasks[numericId] : null;
+
+      var remoteTaskId = task && (typeof task.remoteId !== 'undefined' && task.remoteId !== null)
+        ? task.remoteId
+        : numericId; // fallback for tasks that came from the server
+
+      if (!remoteTaskId) return;
+
+      syncRequest('/api/plugins/tasks/' + remoteTaskId, 'DELETE');
+    }
+
+    function syncDeleteCompletedTasks(listId) {
+      if (!listId) return;
+      syncRequest('/api/plugins/tasks/lists/' + listId + '/completed', 'DELETE');
+    }
+
     function canUseLocalStorage() {
       try {
         return typeof window !== 'undefined' && 'localStorage' in window && window.localStorage != null;
@@ -587,6 +851,7 @@
               slug: 'inbox',
               createdAt: now,
               updatedAt: now,
+              remoteId: null,
             },
           },
           tasks: {},
@@ -597,6 +862,9 @@
         },
         ui: {
           taskFilter: 'all',
+        },
+        sync: {
+          lastServerBootstrapAt: null,
         },
       };
     }
@@ -682,11 +950,33 @@
         }
       });
 
+      // Ensure remoteId and remoteListId for tasks
+      Object.keys(data.tasks).forEach(function (taskId) {
+        var task = data.tasks[taskId];
+        if (!task || typeof task !== 'object') return;
+        if (typeof task.remoteId === 'undefined') {
+          // For tasks that may have come from the server, default remoteId to id when not present
+          task.remoteId = task.id != null ? task.id : null;
+        }
+        if (typeof task.remoteListId === 'undefined') {
+          task.remoteListId = null;
+        }
+      });
+
       // Ensure lists
       if (!data.lists || Object.keys(data.lists).length === 0) {
         var fresh = createDefaultState();
         return fresh;
       }
+
+      // Ensure remoteId for lists
+      Object.keys(data.lists).forEach(function (id) {
+        var list = data.lists[id];
+        if (!list || typeof list !== 'object') return;
+        if (typeof list.remoteId === 'undefined') {
+          list.remoteId = null;
+        }
+      });
 
       // Ensure taskIdsByListId exists and has entries for every list
       if (!data.taskIdsByListId || typeof data.taskIdsByListId !== 'object') {
@@ -715,10 +1005,45 @@
         }
       }
 
+      // Ensure sync
+      if (!state.sync || typeof state.sync !== 'object') {
+        state.sync = {
+          lastServerBootstrapAt: null,
+          remoteListIds: {},
+        };
+      } else {
+        if (typeof state.sync.lastServerBootstrapAt === 'undefined') {
+          state.sync.lastServerBootstrapAt = null;
+        }
+        if (!state.sync.remoteListIds || typeof state.sync.remoteListIds !== 'object') {
+          state.sync.remoteListIds = {};
+        }
+      }
+
       // Bump version
       state.meta.version = CURRENT_VERSION;
       // Do not overwrite createdAt; updatedAt will be refreshed on next mutation
       return state;
+    }
+
+    function isLikelyEmptyState(state) {
+      if (!state || !state.data || !state.data.lists) return true;
+      var lists = state.data.lists;
+      var listIds = Object.keys(lists);
+      if (listIds.length !== 1) return false;
+
+      var onlyList = lists[listIds[0]];
+      var name = (onlyList && onlyList.name) || '';
+      var slug = (onlyList && onlyList.slug) || '';
+
+      var isInbox =
+        slug === 'inbox' ||
+        /^inbox$/i.test(name.trim());
+
+      var tasks = state.data.tasks || {};
+      var anyTasks = Object.keys(tasks).length > 0;
+
+      return isInbox && !anyTasks;
     }
 
     function saveState() {
@@ -816,6 +1141,9 @@
       list.updatedAt = nowISO();
       touchUpdatedAt();
       render();
+
+      // Best-effort sync
+      syncUpdateList(list);
     }
 
     function addList(name) {
@@ -837,6 +1165,7 @@
         slug: trimmed.toLowerCase().replace(/\s+/g, '-'),
         createdAt: now,
         updatedAt: now,
+        remoteId: null,
       };
 
       taskIdsByListId[id] = [];
@@ -848,6 +1177,8 @@
 
       touchUpdatedAt();
       render();
+      // Best-effort sync to server
+      syncCreateList(lists[id]);
     }
     function setTaskFilter(filter) {
       var state = window.$state;
@@ -913,6 +1244,8 @@
       render();
       // After re-render, focus the add-task input for this list
       focusAddTaskInput(listId);
+      // Best-effort sync
+      syncCreateTask(tasks[id]);
     }
 
     function toggleTaskCompleted(taskId) {
@@ -930,6 +1263,7 @@
         task.completed = false;
         task.updatedAt = nowISO();
         touchUpdatedAt();
+        syncUpdateTask(task);
         render();
         return;
       }
@@ -944,6 +1278,7 @@
         task.completed = true;
         task.updatedAt = nowISO();
         touchUpdatedAt();
+        syncUpdateTask(task);
         render();
         return;
       }
@@ -954,6 +1289,7 @@
         task.completed = true;
         task.updatedAt = nowISO();
         touchUpdatedAt();
+        syncUpdateTask(task);
         render();
         return;
       }
@@ -964,6 +1300,7 @@
         task.completed = true;
         task.updatedAt = nowISO();
         touchUpdatedAt();
+        syncUpdateTask(task);
         render();
         return;
       }
@@ -999,6 +1336,7 @@
         task.recurring = null;
         task.updatedAt = nowISO();
         touchUpdatedAt();
+        syncUpdateTask(task);
         render();
         return;
       }
@@ -1008,6 +1346,7 @@
       task.completed = false; // stays active
       task.updatedAt = nowISO();
       touchUpdatedAt();
+      syncUpdateTask(task);
       render();
     }
 
@@ -1022,6 +1361,7 @@
       task.starred = !task.starred;
       task.updatedAt = nowISO();
       touchUpdatedAt();
+      syncUpdateTask(task);
       render();
     }
 
@@ -1486,6 +1826,9 @@
       task.completed = !!payload.completed;
       task.starred = !!payload.starred;
       task.updatedAt = nowISO();
+
+      // Best-effort sync
+      syncUpdateTask(task);
 
       touchUpdatedAt();
       render();
@@ -2125,6 +2468,8 @@
 
       touchUpdatedAt();
       render();
+      // Best-effort sync
+      syncDeleteTask(numericTaskId);
     }
 
     function deleteCompletedTasksInList(listId) {
@@ -2156,6 +2501,8 @@
 
       touchUpdatedAt();
       render();
+      // Best-effort sync
+      syncDeleteCompletedTasks(numericListId);
     }
 
     function deleteList(listId) {
@@ -2198,6 +2545,150 @@
 
       touchUpdatedAt();
       render();
+      // Best-effort sync
+      syncDeleteList(numericId);
+    }
+
+    function bootstrapFromServer() {
+      if (typeof fetch !== 'function') return;
+
+      // Respect offline-first: do not attempt if the browser thinks it's offline
+      if (typeof navigator !== 'undefined' && navigator && navigator.onLine === false) {
+        return;
+      }
+
+      try {
+        fetch('/api/plugins/tasks/bootstrap', {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+          },
+          credentials: 'same-origin',
+        })
+          .then(function (res) {
+            if (!res || !res.ok) {
+              return null;
+            }
+            return res.json();
+          })
+          .then(function (payload) {
+            if (!payload || !payload.lists || !payload.tasks) {
+              return;
+            }
+
+            var now = nowISO();
+            var listsArray = Array.isArray(payload.lists) ? payload.lists : [];
+            var tasksArray = Array.isArray(payload.tasks) ? payload.tasks : [];
+
+            if (!listsArray.length) {
+              return;
+            }
+
+            var listsMap = {};
+            var taskIdsByListId = {};
+            var listOrder = [];
+            var remoteListIds = {};
+
+            listsArray.forEach(function (list) {
+              if (!list || typeof list.id === 'undefined') return;
+              var id = Number(list.id);
+              if (Number.isNaN(id)) return;
+
+              var createdAt = list.createdAt || now;
+              var updatedAt = list.updatedAt || now;
+
+              listsMap[id] = {
+                id: id,
+                name: list.name || ('List ' + id),
+                slug: list.slug || String(list.name || ('list-' + id)).toLowerCase().replace(/\s+/g, '-'),
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                // Server-side ID mirror
+                remoteId: id,
+              };
+              remoteListIds[id] = id;
+              taskIdsByListId[id] = [];
+              listOrder.push(id);
+            });
+
+            var tasksMap = {};
+            tasksArray.forEach(function (task) {
+              if (!task || typeof task.id === 'undefined') return;
+              var id = Number(task.id);
+              if (Number.isNaN(id)) return;
+
+              var listId = Number(task.listId);
+              if (Number.isNaN(listId) || !listsMap[listId]) return;
+
+              var createdAt = task.createdAt || now;
+              var updatedAt = task.updatedAt || now;
+
+              var rec = null;
+              if (task.recurringConfig) {
+                rec = task.recurringConfig;
+              } else if (task.recurring) {
+                rec = task.recurring;
+              }
+
+              var due = null;
+              if (task.dueDate) {
+                var dueStr = String(task.dueDate);
+                due = dueStr.includes('T') ? dueStr.slice(0, 10) : dueStr;
+              }
+
+              tasksMap[id] = {
+                id: id,
+                listId: listId,
+                title: task.title || '',
+                description: task.description || null,
+                dueDate: due,
+                recurring: rec || null,
+                completed: !!task.completed,
+                starred: !!task.starred,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                // Server-side IDs: these tasks come from the server,
+                // so their local id is also the remote id.
+                remoteId: id,
+                remoteListId: listId,
+              };
+
+              if (!taskIdsByListId[listId]) {
+                taskIdsByListId[listId] = [];
+              }
+              taskIdsByListId[listId].push(id);
+            });
+
+            var nextState = {
+              meta: {
+                createdAt: (window.$state && window.$state.meta && window.$state.meta.createdAt) || now,
+                updatedAt: (payload.meta && payload.meta.updatedAt) || now,
+                version: CURRENT_VERSION,
+              },
+              data: {
+                lists: listsMap,
+                tasks: tasksMap,
+                taskIdsByListId: taskIdsByListId,
+                listOrder: listOrder,
+              },
+              ui: (window.$state && window.$state.ui) || { taskFilter: 'all' },
+              sync: {
+                lastServerBootstrapAt: now,
+                remoteListIds: remoteListIds,
+              },
+            };
+
+            window.$state = migrateState(nextState);
+            saveState();
+            render();
+            applyTaskFilterUI();
+          })
+          .catch(function () {
+            // Silently ignore network / parsing errors to preserve offline-first behaviour
+          });
+      } catch (e) {
+        // Ignore environments without fetch or unexpected failures
+      }
     }
 
     function resetState() {
@@ -2218,6 +2709,12 @@
       initState();
       render();
       applyTaskFilterUI();
+
+      // If this looks like a fresh/default state (single Inbox, no tasks),
+      // try to hydrate from the server once, without breaking offline use.
+      if (isLikelyEmptyState(window.$state)) {
+        bootstrapFromServer();
+      }
 
       var filterButtons = document.querySelectorAll('.sv-tasks__filter-button');
       filterButtons.forEach(function (btn) {

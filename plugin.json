@@ -8,6 +8,7 @@
   "devOnly": false,
   "draft": false,
   "entryPoints": {
+    "api": "routes/api/index.js",
     "web": "routes/web/index.js"
   },
   "corePlugin": false,
@@ -28,7 +29,9 @@
     "schemaVersion": 1,
     "allowMultipleInstances": false,
     "compat": { "platform": "^0.7.3", "node": ">=20" },
-    "platformCapabilities": {},
+    "platformCapabilities": {
+      "database": true
+    },
     "userCapabilities": [
       {
         "key": "user:plugin.tasks.feature",
