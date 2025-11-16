@@ -21,6 +21,7 @@ export default (ctx) => {
 
   const prisma = ctx.prisma;
   const logger = ctx.logger || console;
+  const INVITE_MAX_AGE_DAYS = 30;
 
   function asyncHandler(fn) {
     return function (req, res, next) {
@@ -453,6 +454,34 @@ export default (ctx) => {
         410,
         "List unavailable",
         "The list linked to this invitation no longer exists."
+      );
+    }
+
+    // Enforce invite recipient email: require the signed-in user's email to match the invite target
+    const currentEmail = (req.user && req.user.email ? String(req.user.email) : "").toLowerCase().trim();
+    const invitedEmail = (invite.email || "").toLowerCase().trim();
+    if (!currentEmail || currentEmail !== invitedEmail) {
+      return renderInviteError(
+        res,
+        403,
+        "Wrong account",
+        "Please sign in with the email address that received this invitation."
+      );
+    }
+
+    // Enforce a maximum age on invites to avoid indefinite validity
+    const createdAt = invite.createdAt ? new Date(invite.createdAt) : null;
+    const now = new Date();
+    if (createdAt && now.getTime() - createdAt.getTime() > INVITE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000) {
+      await prisma.taskListShareInvite.update({
+        where: { id: invite.id },
+        data: { status: "revoked" },
+      });
+      return renderInviteError(
+        res,
+        410,
+        "Invitation expired",
+        "This invitation has expired. Please ask the sender to share the list again."
       );
     }
 
