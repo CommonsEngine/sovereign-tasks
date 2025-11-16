@@ -3,7 +3,7 @@
   "namespace": "tasks",
   "name": "Tasks",
   "description": "Dead simple, offline-first task lists.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "framework": "js",
   "enabled": true,
