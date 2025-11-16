@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    {{> layout/head}}
+    <meta name="robots" content="noindex" />
+    <style>
+      .sv-accept {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #f8fafc;
+      }
+      .sv-accept__card {
+        background: #ffffff;
+        border-radius: 12px;
+        padding: 24px;
+        max-width: 560px;
+        width: 100%;
+        box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+      }
+      .sv-accept__heading {
+        margin: 0 0 8px;
+      }
+      .sv-accept__message {
+        margin: 0 0 16px;
+      }
+      .sv-accept__actions a {
+        display: inline-block;
+        padding: 10px 16px;
+        border-radius: 8px;
+        background: #0284c7;
+        color: #ffffff;
+        text-decoration: none;
+        font-weight: 600;
+      }
+      .sv-accept__actions a:hover {
+        background: #0369a1;
+      }
+    </style>
+  </head>
+  <body class="sv-accept">
+    <main class="sv-accept__card" role="main">
+      <h1 class="sv-accept__heading">{{heading}}</h1>
+      <p class="sv-accept__message">{{message}}</p>
+      {{#if ctaHref}}
+        <div class="sv-accept__actions">
+          <a href="{{ctaHref}}">Open Tasks</a>
+        </div>
+      {{/if}}
+    </main>
+  </body>
+</html>

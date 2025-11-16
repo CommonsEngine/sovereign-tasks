@@ -1,14 +1,17 @@
 import express from "express";
-import path from "path";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 // Helper to resolve current user id from request (adapt as needed to Sovereign auth)
 function getUserId(req) {
   // Adjust this to match Sovereign's auth/user injection
   return (req.user && req.user.id) || req.userId || req.session?.userId || null;
+}
+
+function renderInviteError(res, statusCode, message, description) {
+  return res.status(statusCode).render("error", {
+    code: statusCode,
+    message,
+    description,
+    nodeEnv: process.env.NODE_ENV,
+  });
 }
 
 // ctx = { prisma, logger, etc. }
@@ -383,6 +386,152 @@ export default (ctx) => {
     });
 
     res.json({ ok: true, deletedCount: result.count });
+  }));
+
+  // Web: Accept a shared list invitation
+  router.get("/share/accept", asyncHandler(async (req, res) => {
+    const token = (req.query && req.query.token) ? String(req.query.token) : "";
+    if (!token) {
+      return renderInviteError(
+        res,
+        400,
+        "Missing invitation",
+        "The invitation link is missing a token. Please use the link from your email again."
+      );
+    }
+
+    const invite = await prisma.taskListShareInvite.findUnique({
+      where: { token },
+    });
+    if (!invite) {
+      return renderInviteError(
+        res,
+        404,
+        "Invitation not found",
+        "This invitation link is invalid or has already been used."
+      );
+    }
+
+    if (invite.status === "revoked") {
+      return renderInviteError(
+        res,
+        410,
+        "Invitation revoked",
+        "The sender revoked this invitation. Please ask for a new invite if you still need access."
+      );
+    }
+
+    if (invite.status === "accepted") {
+      return res.status(409).render("tasks/share-accept", {
+        heading: "Invitation already accepted",
+        message: "This invitation was already accepted. If you believe this is a mistake, request a new invite.",
+        ctaHref: "/tasks",
+      });
+    }
+
+    const userId = getUserId(req);
+    if (!userId) {
+      return renderInviteError(
+        res,
+        401,
+        "Sign in required",
+        "Please sign in to accept this shared list invitation, then open the link again."
+      );
+    }
+
+    const sourceList = await prisma.taskList.findUnique({
+      where: { id: invite.listId },
+    });
+    if (!sourceList) {
+      // Update invite status to avoid dangling unusable tokens
+      await prisma.taskListShareInvite.update({
+        where: { id: invite.id },
+        data: { status: "revoked" },
+      });
+      return renderInviteError(
+        res,
+        410,
+        "List unavailable",
+        "The list linked to this invitation no longer exists."
+      );
+    }
+
+    const tasksToClone = await prisma.task.findMany({
+      where: { listId: sourceList.id },
+      orderBy: [{ position: "asc" }, { id: "asc" }],
+    });
+
+    const baseSlug = sourceList.slug || (sourceList.name || "list")
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9-]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || "list";
+
+    const createdList = await prisma.$transaction(async (tx) => {
+      const listPosition = await tx.taskList.count({ where: { userId } });
+
+      // Ensure slug uniqueness per user
+      let uniqueSlug = baseSlug;
+      let suffix = 2;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const conflict = await tx.taskList.findFirst({
+          where: { userId, slug: uniqueSlug },
+          select: { id: true },
+        });
+        if (!conflict) break;
+        uniqueSlug = `${baseSlug}-${suffix}`;
+        suffix += 1;
+      }
+
+      const clonedList = await tx.taskList.create({
+        data: {
+          userId,
+          name: sourceList.name,
+          slug: uniqueSlug,
+          position: listPosition,
+        },
+      });
+
+      if (tasksToClone.length > 0) {
+        await tx.task.createMany({
+          data: tasksToClone.map((task) => ({
+            userId,
+            listId: clonedList.id,
+            title: task.title,
+            description: task.description,
+            dueDate: task.dueDate,
+            recurringConfig: task.recurringConfig,
+            completed: task.completed,
+            starred: task.starred,
+            position: task.position,
+          })),
+        });
+      }
+
+      await tx.taskListShareInvite.update({
+        where: { id: invite.id },
+        data: { status: "accepted" },
+      });
+
+      return clonedList;
+    });
+
+    if (logger && typeof logger.info === "function") {
+      logger.info("[tasks-web] share:accept", {
+        userId,
+        inviteId: invite.id,
+        sourceListId: invite.listId,
+        clonedListId: createdList.id,
+      });
+    }
+
+    return res.render("tasks/share-accept", {
+      heading: "Invitation accepted",
+      message: `The list "${createdList.name}" was added to your Tasks.`,
+      ctaHref: "/tasks",
+    });
   }));
 
   // Main view
