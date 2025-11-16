@@ -387,7 +387,8 @@ export default (ctx) => {
 
   // Main view
   router.get(["/", "/index", "/home"], (req, res) => {
-    return res.render("tasks/index");
+    const userId = getUserId(req);
+    return res.render("tasks/index", { tasksUserId: userId || "" });
   });
 
   return router;

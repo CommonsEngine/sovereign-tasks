@@ -384,7 +384,7 @@
 </style>
 <div class="sv-page__wrap--full">
   <section class="sv-page__grid">
-    <div id="sv-tasks-root" class="sv-tasks">
+    <div id="sv-tasks-root" class="sv-tasks" data-user-id="{{tasksUserId}}">
       <!-- Board toolbar (reserved for future use) -->
       <div class="sv-tasks__toolbar flex row align-items-center flex-space-between">
         <div class="sv-tasks__toolbar-left flex row gap-s">
@@ -606,7 +606,17 @@
       return null;
     }
 
-    var STORAGE_KEY = 'sv:tasks:state:v1';
+    var STORAGE_USER_ID = (function () {
+      var root = document.getElementById('sv-tasks-root');
+      if (root && root.dataset && typeof root.dataset.userId === 'string' && root.dataset.userId.trim()) {
+        return root.dataset.userId.trim();
+      }
+      if (typeof window !== 'undefined' && window && typeof window.__SV_TASKS_USER_ID__ === 'string') {
+        return window.__SV_TASKS_USER_ID__;
+      }
+      return '';
+    })();
+    var STORAGE_KEY = 'sv:tasks:' + (STORAGE_USER_ID ? ('user:' + STORAGE_USER_ID) : 'anon') + ':state:v1';
     var CURRENT_VERSION = '0.1.1';
 
     // --- Sync helpers ---
