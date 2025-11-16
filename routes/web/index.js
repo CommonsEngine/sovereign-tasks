@@ -427,6 +427,7 @@ export default (ctx) => {
         heading: "Invitation already accepted",
         message: "This invitation was already accepted. If you believe this is a mistake, request a new invite.",
         ctaHref: "/tasks",
+        note: "If you don't see the list, open Tasks and refresh. This invite is already finished.",
       });
     }
 
@@ -464,8 +465,8 @@ export default (ctx) => {
       return renderInviteError(
         res,
         403,
-        "Wrong account",
-        "Please sign in with the email address that received this invitation."
+        "Sign in with the invited email",
+        `You are signed in as ${currentEmail || "another account"}, but this invitation was sent to ${invitedEmail || "a different email"}. Please switch accounts and try again.`
       );
     }
 
@@ -560,6 +561,8 @@ export default (ctx) => {
       heading: "Invitation accepted",
       message: `The list "${createdList.name}" was added to your Tasks.`,
       ctaHref: "/tasks",
+      listUrl: `/tasks?list=${encodeURIComponent(createdList.slug)}`,
+      note: "You'll find this list in your Tasks board. If it doesn't appear immediately, refresh the page.",
     });
   }));
 

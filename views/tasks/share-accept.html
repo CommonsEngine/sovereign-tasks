@@ -48,6 +48,12 @@
           <a href="{{ctaHref}}">Open Tasks</a>
         </div>
       {{/if}}
+      {{#if listUrl}}
+        <p class="sv-accept__message">Jump straight to this list: <a href="{{listUrl}}">{{listUrl}}</a></p>
+      {{/if}}
+      {{#if note}}
+        <p class="sv-accept__message">{{note}}</p>
+      {{/if}}
     </main>
   </body>
 </html>
