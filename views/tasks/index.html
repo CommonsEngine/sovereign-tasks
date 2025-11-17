@@ -11,10 +11,6 @@
     padding-block: var(--space-m);
   }
 
-  .sv-tasks__toolbar {
-    margin-bottom: var(--space-s);
-  }
-
   /* Horizontal board of columns */
   .sv-tasks__board {
     display: flex;
@@ -39,7 +35,7 @@
     display: flex;
     flex-direction: column;
     /* Make columns reach closer to the bottom of the viewport */
-    height: calc(100vh - 155px);
+    height: calc(100vh - 185px);
   }
 
   .sv-tasks__list--dragging {
@@ -383,13 +379,18 @@
   }
 </style>
 <div class="sv-page__wrap--full">
+
   <section class="sv-page__grid">
+
     <div id="sv-tasks-root" class="sv-tasks" data-user-id="{{tasksUserId}}">
       <!-- Board toolbar (reserved for future use) -->
       <div class="sv-tasks__toolbar flex row align-items-center flex-space-between">
-        <div class="sv-tasks__toolbar-left flex row gap-s">
-          <span class="sv-h-5">My lists</span>
-        </div>
+        <header class="sv-page__header flex row flex-space-between align-items-center">
+          <div>
+            <h2 class="sv-page__title">My Tasks</h2>
+            <p class="sv-page__subtitle">Create, prioritize, and manage your tasks in one place.</p>
+          </div>
+        </header>
         <div class="sv-tasks__toolbar-right flex row gap-xs">
           <button type="button" class="sv-tasks__filter-button" data-filter="all">All</button>
           <button type="button" class="sv-tasks__filter-button" data-filter="active">Active</button>
