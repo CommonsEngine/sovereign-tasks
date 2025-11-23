@@ -163,11 +163,6 @@
     font-size: 0.85rem;
   }
 
-  .sv-tasks__task-delete {
-    margin-left: auto;
-    font-size: 0.8rem;
-  }
-
   .sv-tasks__task-title {
     font-size: 0.875rem;
     color: var(--color-text-primary);
@@ -176,6 +171,10 @@
   .sv-tasks__task-meta {
     font-size: 0.75rem;
     color: var(--color-text-secondary);
+  }
+
+  .sv-tasks__task-content {
+    flex: 1;
   }
 
   /* Completed state */
@@ -2661,21 +2660,6 @@
           taskMain.appendChild(checkbox);
           taskMain.appendChild(starButton);
           taskMain.appendChild(content);
-
-          // Quick delete button on the card
-          var deleteBtn = document.createElement('button');
-          deleteBtn.type = 'button';
-          deleteBtn.className = 'sv-icon-button sv-tasks__task-delete';
-          deleteBtn.setAttribute('aria-label', 'Delete task');
-          deleteBtn.textContent = '🗑';
-          deleteBtn.addEventListener('click', function (event) {
-            event.stopPropagation();
-            var ok = window.confirm ? window.confirm('Delete this task?') : true;
-            if (!ok) return;
-            deleteTask(taskId);
-          });
-
-          taskMain.appendChild(deleteBtn);
 
           taskCard.appendChild(taskMain);
           if (task.completed) {
